@@ -33,23 +33,28 @@
 
 #include "../config.h"
 #include "../debug.h"
-
+#include <unordered_map>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
-
+#include <map>
+#include<set>
+//#include<pair>
 using namespace llvm;
-
+using namespace std;
 namespace {
 
   class AFLCoverage : public ModulePass {
+	private:
+	       	map<BasicBlock*,unsigned int> BBID_map;
 
     public:
 
@@ -126,7 +131,9 @@ bool AFLCoverage::runOnModule(Module &M) {
       /* Make up cur_loc */
 
       unsigned int cur_loc = AFL_R(MAP_SIZE);
-
+	if(BBID_map.find(&BB)==BBID_map.end()){
+		BBID_map.insert({&BB,cur_loc});
+	}
       ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
 
       /* Load prev_loc */
@@ -171,7 +178,26 @@ bool AFLCoverage::runOnModule(Module &M) {
               "ASAN/MSAN" : "non-hardened"), inst_ratio);
 
   }
-
+//output cfg
+	FILE* fp=fopen("./CFG","w+");
+	for(auto &F:M){
+		for(auto &BB:F){
+			auto id=BBID_map.find(&BB)->second;
+			set<unsigned int> childs;
+			TerminatorInst *term=BB.getTerminator();
+			for(int i=0;i<term->getNumSuccessors();i++){
+				BasicBlock *Succ=term->getSuccessor(i);
+				auto it=BBID_map.find(Succ);
+				if(it!=BBID_map.end())
+					childs.insert(it->second);
+			}
+			fprintf(fp,"%x %lx ",id,childs.size());
+			for(auto it=childs.begin();it!=childs.end();it++)
+				fprintf(fp,"%x ",*it);
+			fprintf(fp,"\n");
+		}
+	}
+	fclose(fp);
   return true;
 
 }
