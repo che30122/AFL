@@ -43,6 +43,8 @@
 #include "alloc-inl.h"
 #include "hash.h"
 
+#include <float.h>
+#include <math.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -153,6 +155,9 @@ EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
 EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
            virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
            virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
+/*che fuzz for edge_num record*/
+EXP_ST u64 edge_num[MAP_SIZE];
+EXP_ST double edge_prob[MAP_SIZE];
 
 static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
 
@@ -239,6 +244,9 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 static FILE* plot_file;               /* Gnuplot output file              */
 
 struct queue_entry {
+	u8 trace_bit[MAP_SIZE];
+	double prob;
+	char prob_level;
 
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
@@ -287,6 +295,13 @@ static u32 extras_cnt;                /* Total number of tokens read      */
 static struct extra_data* a_extras;   /* Automatically selected extras    */
 static u32 a_extras_cnt;              /* Total number of tokens available */
 
+struct node{
+	u32 id;
+	u32 succ_num;
+	struct node **succ_list;
+	u32* hv_list;
+};
+struct node* cfg[MAP_SIZE];
 static u8* (*post_handler)(u8* buf, u32* len);
 
 /* Interesting values, as per config.h */
@@ -339,6 +354,122 @@ enum {
 
 /* Get unix time in milliseconds */
 
+static void init_edge_num(){
+	memset(edge_num,0,sizeof(edge_num));
+}
+static void init_edge_prob(){
+	u32 i;
+	for(i=0;i<MAP_SIZE;i++)
+		edge_prob[i]=0.03;
+}
+static double cal_prob(struct queue_entry* q){
+	u32 i;
+	q->prob=1;
+	for(i=0;i<MAP_SIZE;i++){
+		if(q->trace_bit[i])
+			q->prob*=edge_prob[i];
+	}
+}
+static void update_edge_prob(){
+	u32 i;
+	for(i=0;i<MAP_SIZE;i++){
+		if(cfg[i]){
+			u32 succ_num=cfg[i]->succ_num;
+			u64 total=0;
+			u32 j=0;
+			for(j=0;j<succ_num;j++){
+				total+=edge_num[cfg[i]->hv_list[j]];
+			}
+			for(j=0;j<succ_num;j++){
+				double prob=(double)edge_num[cfg[i]->hv_list[j]]/(double)total;
+				if(prob==0)
+					prob=0.03;
+				edge_prob[cfg[i]->hv_list[j]]=prob;
+				
+
+			}
+		}
+	}
+}
+static void allocate_list(struct node* node,u32 succ_num){
+	if(succ_num<=0)
+		return ;
+	u32* tmp=(u32*)malloc(sizeof(u32)*succ_num);
+	struct node* tmp2=(struct node**)malloc(sizeof(struct node*)*succ_num);
+	if(!tmp || !tmp2)
+		exit(-1);
+	node->hv_list=tmp;
+	node->succ_list=tmp2;
+	return;
+}
+static struct node* new_node(u32 id,u32 succ_num){
+	struct node* newptr=(struct node*)malloc(sizeof(struct node));
+	if(newptr==NULL){
+		exit(-1);
+	}
+	newptr->id=id;
+	newptr->succ_num=succ_num;
+	newptr->succ_list=NULL;
+	if(succ_num!=-1){
+		allocate_list(newptr,succ_num);
+	}
+	else{
+		newptr->hv_list=NULL;
+		newptr->succ_list=NULL;
+	}
+	return newptr;
+}
+static void init_cfg(){
+	u32 id;
+	u32 succ_num;
+	u32 i;
+	FILE* fptr=fopen("./CFG","r");
+	memset(cfg,0,sizeof(cfg));
+		
+	if(fptr==NULL){
+		exit(-1);
+	}
+	while(fscanf(fptr,"%u %u ",&id,&succ_num)==2){
+		char newline;
+		u32 succ_id;
+		if(cfg[id]==NULL){
+			struct node* newptr=new_node(id,succ_num);
+			cfg[id]=newptr;
+		}
+		else if(cfg[id]->succ_num==-1){
+			allocate_list(cfg[id],succ_num);
+		}
+		for(i=0;i<succ_num;i++){
+			fscanf(fptr,"%u ",&succ_id);
+			if(cfg[succ_id]==NULL){
+				cfg[succ_id]=new_node(id,-1);
+				cfg[id]->succ_list[i]=cfg[succ_id];
+				cfg[id]->hv_list[i]=succ_id;
+			}
+		}
+
+		fscanf(fptr,"%c",&newline);
+	}
+}
+
+static void destory_cfg(){
+	u32 i;
+	for(i=0;i<MAP_SIZE;i++){
+		if(cfg[i]){
+			if(cfg[i]->succ_list){
+				free(cfg[i]->succ_list);
+				cfg[i]->succ_list=NULL;
+			}
+			if(cfg[i]->hv_list){
+				free(cfg[i]->hv_list);
+				cfg[i]->hv_list=NULL;
+
+			}
+			free(cfg[i]);
+			cfg[i]=NULL;
+		}
+	}
+}
 static u64 get_cur_time(void) {
 
   struct timeval tv;
@@ -809,7 +940,8 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->len          = len;
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
-
+	/*che fuzz*/
+  	memcpy(q->trace_bit,trace_bits,sizeof(q->trace_bit));
   if (q->depth > max_depth) max_depth = q->depth;
 
   if (queue_top) {
@@ -833,7 +965,38 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   }
 
   last_path_time = get_cur_time();
-
+	/*CHE FUZZ*/
+  	double prob_sum=0.0,prob_pow_sum=0.0;
+	double level[8];
+	double q_count=0;
+	double means,sigma;
+  	struct queue_entry* p=queue_top;
+	u32 i=0;
+  	while(p){
+		p->prob=cal_prob(p);
+		prob_sum+=p->prob;
+		prob_pow_sum+=(p->prob*p->prob);
+		q_count++;
+		p=p->next;
+	}
+	means=prob_sum/q_count;
+	sigma=sqrt(prob_pow_sum/q_count-means*means);
+	level[0]=0.0;
+	level[7]=DBL_MAX;
+	int b=-3;
+	for(i=1;i<7;i++){
+		level[i]=means+b*sigma;
+		b++;
+	}
+	p=queue_top;
+	while(p){
+		for(i=0;i<7;i++){
+			if(p->prob>=level[i] && p->prob<level[i]){
+				p->prob_level=i;
+			}
+		}
+		p=p->next;
+	}
 }
 
 
@@ -923,7 +1086,8 @@ static inline u8 has_new_bits(u8* virgin_map) {
 #endif /* ^WORD_SIZE_64 */
 
   u8   ret = 0;
-
+	u32 edge_index=0;
+	u32 j=0;
   while (i--) {
 
     /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
@@ -947,7 +1111,6 @@ static inline u8 has_new_bits(u8* virgin_map) {
             (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
             (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
         else ret = 1;
-
 #else
 
         if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
@@ -961,7 +1124,22 @@ static inline u8 has_new_bits(u8* virgin_map) {
       *virgin &= ~*current;
 
     }
+    u8* cur = (u8*)current;
+    u8* vir = (u8*)virgin;
+#ifdef WORD_SIZE_64
+	
+	/*che fuzz*/
+	edge_index=i<<3;
 
+	for(j=0;j<8;j++){
+		edge_num[edge_index+j]+=cur[j];
+	}
+#else
+	edge_index=i<<2;
+	for(j=0;j<4;j++){
+		edge_num[edge_index+j]+=cur[j];
+	}
+#endif
     current++;
     virgin++;
 
