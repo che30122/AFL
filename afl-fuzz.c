@@ -299,7 +299,7 @@ struct node{
 	u32 id;
 	u32 succ_num;
 	struct node **succ_list;
-	u32* hv_list;
+	u16* hv_list;
 };
 struct node* cfg[MAP_SIZE];
 static u8* (*post_handler)(u8* buf, u32* len);
@@ -380,21 +380,36 @@ static void update_edge_prob(){
 			for(j=0;j<succ_num;j++){
 				total+=edge_num[cfg[i]->hv_list[j]];
 			}
+			if(total==0)
+				continue;
 			for(j=0;j<succ_num;j++){
 				double prob=(double)edge_num[cfg[i]->hv_list[j]]/(double)total;
 				if(prob==0)
 					prob=0.03;
 				edge_prob[cfg[i]->hv_list[j]]=prob;
-				
+				//printf("")		
 
 			}
 		}
 	}
 }
+static void show_edge_prob(){
+	u32 i;
+	printf("show_edge_prob\n");
+	for(i=0;i<MAP_SIZE;i++){
+		if(edge_num[i]!=0)
+			printf("%x edge num %d\n",i,edge_num[i]);
+		if(edge_prob[i]!=0.03)
+			printf("%x prob: %lf\n",i,edge_prob[i]);
+	}
+
+	//getchar();
+}
 static void allocate_list(struct node* node,u32 succ_num){
 	if(succ_num<=0)
 		return ;
-	u32* tmp=(u32*)malloc(sizeof(u32)*succ_num);
+	node->succ_num=succ_num;
+	u16* tmp=(u16*)malloc(sizeof(u16)*succ_num);
 	struct node* tmp2=(struct node**)malloc(sizeof(struct node*)*succ_num);
 	if(!tmp || !tmp2)
 		exit(-1);
@@ -410,7 +425,7 @@ static struct node* new_node(u32 id,u32 succ_num){
 	newptr->id=id;
 	newptr->succ_num=succ_num;
 	newptr->succ_list=NULL;
-	if(succ_num!=-1){
+	if(succ_num>0){
 		allocate_list(newptr,succ_num);
 	}
 	else{
@@ -424,34 +439,56 @@ static void init_cfg(){
 	u32 succ_num;
 	u32 i;
 	FILE* fptr=fopen("./CFG","r");
-	memset(cfg,0,sizeof(cfg));
+	for(i=0;i<MAP_SIZE;i++)
+		cfg[i]=NULL;
+	//memset(cfg,0,sizeof(cfg));
 		
 	if(fptr==NULL){
+		printf("can not open CFG file\n");
 		exit(-1);
 	}
-	while(fscanf(fptr,"%u %u ",&id,&succ_num)==2){
+	while(fscanf(fptr,"%x",&id)==1){
+		fscanf(fptr,"%lx",&succ_num);
+		printf("%x %x\n",id,succ_num);
 		char newline;
 		u32 succ_id;
 		if(cfg[id]==NULL){
 			struct node* newptr=new_node(id,succ_num);
 			cfg[id]=newptr;
 		}
-		else if(cfg[id]->succ_num==-1){
+		else if(cfg[id]->succ_num==0){
 			allocate_list(cfg[id],succ_num);
 		}
 		for(i=0;i<succ_num;i++){
-			fscanf(fptr,"%u ",&succ_id);
+			fscanf(fptr,"%x",&succ_id);
+			//printf("%x ",succ_id);
 			if(cfg[succ_id]==NULL){
-				cfg[succ_id]=new_node(id,-1);
+				cfg[succ_id]=new_node(id,0);
 				cfg[id]->succ_list[i]=cfg[succ_id];
-				cfg[id]->hv_list[i]=succ_id;
+				cfg[id]->hv_list[i]=((id>>1) ^succ_id);
+				printf("%x ",cfg[id]->hv_list[i]);
 			}
 		}
 
 		fscanf(fptr,"%c",&newline);
+//		getchar();
+	}
+	printf("load CFG success\n");
+}
+static void print_cfg(){
+	u32 i;
+	for(i=0;i<MAP_SIZE;i++){
+		if(cfg[i]!=NULL){
+			u32 j;
+			printf("%x %lx ",i,cfg[i]->succ_num);
+	//		getchar();
+			for(j=0;j<cfg[i]->succ_num;j++){
+				printf("%x ",cfg[i]->hv_list[j]);
+			}
+			printf("\n");
+		}
 	}
 }
-
 static void destory_cfg(){
 	u32 i;
 	for(i=0;i<MAP_SIZE;i++){
@@ -933,7 +970,8 @@ static void mark_as_redundant(struct queue_entry* q, u8 state) {
 /* Append new test case to the queue. */
 
 static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
-
+printf("add to queue\n");
+getchar();
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
 
   q->fname        = fname;
@@ -966,8 +1004,9 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   last_path_time = get_cur_time();
 	/*CHE FUZZ*/
+  	update_edge_prob();
   	double prob_sum=0.0,prob_pow_sum=0.0;
-	double level[8];
+	double level[9];
 	double q_count=0;
 	double means,sigma;
   	struct queue_entry* p=queue_top;
@@ -982,15 +1021,15 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 	means=prob_sum/q_count;
 	sigma=sqrt(prob_pow_sum/q_count-means*means);
 	level[0]=0.0;
-	level[7]=DBL_MAX;
+	level[8]=DBL_MAX;
 	int b=-3;
-	for(i=1;i<7;i++){
+	for(i=1;i<8;i++){
 		level[i]=means+b*sigma;
 		b++;
 	}
 	p=queue_top;
 	while(p){
-		for(i=0;i<7;i++){
+		for(i=0;i<8;i++){
 			if(p->prob>=level[i] && p->prob<level[i]){
 				p->prob_level=i;
 			}
@@ -1068,7 +1107,7 @@ EXP_ST void read_bitmap(u8* fname) {
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
 
 static inline u8 has_new_bits(u8* virgin_map) {
-
+	u8* virgin_addr=virgin_map;
 #ifdef WORD_SIZE_64
 
   u64* current = (u64*)trace_bits;
@@ -1126,9 +1165,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
     }
     u8* cur = (u8*)current;
     u8* vir = (u8*)virgin;
-#ifdef WORD_SIZE_64
+/*#ifdef WORD_SIZE_64
 	
-	/*che fuzz*/
+	
 	edge_index=i<<3;
 
 	for(j=0;j<8;j++){
@@ -1139,14 +1178,18 @@ static inline u8 has_new_bits(u8* virgin_map) {
 	for(j=0;j<4;j++){
 		edge_num[edge_index+j]+=cur[j];
 	}
-#endif
+#endif*/
     current++;
     virgin++;
 
   }
-
+	
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
-
+	if(virgin_addr == &virgin_bits){
+    		for(i=0;i<MAP_SIZE;i++){
+	    		edge_num[i]+=trace_bits[i];
+    		}
+	}
   return ret;
 
 }
@@ -4571,7 +4614,7 @@ static void show_stats(void) {
   } else SAYF("\r");
 
   /* Hallelujah! */
-
+//show_edge_prob();
   fflush(0);
 
 }
@@ -4930,7 +4973,11 @@ static u32 calculate_score(struct queue_entry* q) {
   /* Adjust score based on execution speed of this path, compared to the
      global average. Multiplier ranges from 0.1x to 3x. Fast inputs are
      less expensive to fuzz, so we're giving them more air time. */
-
+	/*switch(q->prob_level){
+		case 0:
+			perf_score=300;
+			break;
+	}*/
   if (q->exec_us * 0.1 > avg_exec_us) perf_score = 10;
   else if (q->exec_us * 0.25 > avg_exec_us) perf_score = 25;
   else if (q->exec_us * 0.5 > avg_exec_us) perf_score = 50;
@@ -4952,7 +4999,33 @@ static u32 calculate_score(struct queue_entry* q) {
   /* Adjust score based on handicap. Handicap is proportional to how late
      in the game we learned about this path. Latecomers are allowed to run
      for a bit longer until they catch up with the rest. */
+	switch(q->prob_level){
+		case 0:
+			perf_score*=20;
+			break;
 
+		case 1:
+			perf_score*=6;
+			break;
+		case 2:
+			perf_score*=2;
+			break;
+		case 3:
+			perf_score*=1;
+			break;
+		case 4:
+			perf_score/=1;
+			break;
+		case 5:
+			perf_score/=2;
+			break;
+		case 6:
+			perf_score/=6;
+			break;
+		case 7:
+			perf_score/=20;
+			break;
+	}
   if (q->handicap >= 4) {
 
     perf_score *= 4;
@@ -8238,6 +8311,13 @@ int main(int argc, char** argv) {
 
   check_binary(argv[optind]);
 
+
+  init_cfg();
+  printf("init cfg done!\n");
+  init_edge_num();
+  init_edge_prob();
+  print_cfg();
+//	return 0;
   start_time = get_cur_time();
 
   if (qemu_mode)
