@@ -179,7 +179,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   }
 //output cfg
-	FILE* fp=fopen("./CFG","w+");
+	FILE* fp=fopen("./CFG","a");
 	for(auto &F:M){
 		for(auto &BB:F){
 			auto id=BBID_map.find(&BB)->second;

@@ -104,6 +104,8 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *target_path,               /* Path to target binary            */
           *orig_cmdline;              /* Original command line            */
 
+EXP_ST u8 *cfg_file;
+
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
 
@@ -296,7 +298,7 @@ static struct extra_data* a_extras;   /* Automatically selected extras    */
 static u32 a_extras_cnt;              /* Total number of tokens available */
 
 struct node{
-	u32 id;
+	u16 id;
 	u32 succ_num;
 	struct node **succ_list;
 	u16* hv_list;
@@ -357,6 +359,22 @@ enum {
 static void init_edge_num(){
 	memset(edge_num,0,sizeof(edge_num));
 }
+
+static void update_edge_num(){
+	u32 i;
+	for(i=0;i<MAP_SIZE;i++){
+		edge_num[i]+=trace_bits[i];
+	}
+}
+
+/*static void update_per_edge_prob(){
+	u32 i;
+	for(i=0;i<MAP_SIZE;i++){
+		if(trace_bits[i]){
+			u32 succ_num=cfg
+		}
+	}
+}*/
 static void init_edge_prob(){
 	u32 i;
 	for(i=0;i<MAP_SIZE;i++)
@@ -370,6 +388,7 @@ static double cal_prob(struct queue_entry* q){
 			q->prob*=edge_prob[i];
 	}
 }
+
 static void update_edge_prob(){
 	u32 i;
 	for(i=0;i<MAP_SIZE;i++){
@@ -383,16 +402,97 @@ static void update_edge_prob(){
 			if(total==0)
 				continue;
 			for(j=0;j<succ_num;j++){
+				if(edge_num[cfg[i]->hv_list[j]]==0){
+					edge_prob[cfg[i]->hv_list[j]]=0.03;
+					continue;
+				}
 				double prob=(double)edge_num[cfg[i]->hv_list[j]]/(double)total;
-				if(prob==0)
-					prob=0.03;
+				/*if(prob==0)
+					prob=0.03;*/
 				edge_prob[cfg[i]->hv_list[j]]=prob;
 				//printf("")		
-
+				if(total>50000000){
+					edge_num[cfg[i]->hv_list[j]]=(u64)floor(1000000*prob);
+				}
 			}
 		}
 	}
 }
+static void update_per_prob_level(struct queue_entry* q){
+  	double prob_sum=0.0,prob_pow_sum=0.0;
+	double level[9];
+	double q_count=0;
+	double means,sigma;
+  	struct queue_entry* q_top=queue_top;
+	u32 i;
+	//q->prob=cal_prob(q);
+	while(q_top){
+		if(q_top==q){
+			q->prob=cal_prob(q);
+		}
+		prob_sum+=q_top->prob;
+		prob_pow_sum+=(q_top->prob*q_top->prob);
+		q_count++;
+		q_top=q_top->next;
+	}
+	means=prob_sum/q_count;
+	sigma=sqrt(prob_pow_sum/q_count-means*means);
+	level[0]=0.0;
+	level[8]=DBL_MAX;
+	int b=-3;
+	for(i=1;i<8;i++){
+		level[i]=means+b*sigma;
+		b++;
+	}
+	//judge level
+	for(i=0;i<8;i++){
+		if(q->prob>=level[i] && q->prob<level[i]){
+			q->prob_level=i;
+		}
+	}
+	
+}
+static void update_prob_level(){	
+  	update_edge_prob();
+  	double prob_sum=0.0,prob_pow_sum=0.0;
+	double level[9];
+	double q_count=0;
+	double means,sigma;
+  	struct queue_entry* q=queue_top;
+	u32 i=0;
+  	while(q){
+		q->prob=cal_prob(q);
+		prob_sum+=q->prob;
+		prob_pow_sum+=(q->prob*q->prob);
+		q_count++;
+		q=q->next;
+	}
+	means=prob_sum/q_count;
+	sigma=sqrt(prob_pow_sum/q_count-means*means);
+	level[0]=0.0;
+	level[8]=DBL_MAX;
+	int b=-3;
+	for(i=1;i<8;i++){
+		level[i]=means+b*sigma;
+		b++;
+	}
+	q=queue_top;
+	while(q){
+		for(i=0;i<8;i++){
+			if(q->prob>=level[i] && q->prob<level[i]){
+				q->prob_level=i;
+			}
+		}
+		q=q->next;
+	}
+}
+
+static void update_prob_per_run(struct queue_entry* q){
+	update_edge_num();
+	update_edge_prob();
+	update_per_prob_level(q);
+}
+
 static void show_edge_prob(){
 	u32 i;
 	printf("show_edge_prob\n");
@@ -406,18 +506,18 @@ static void show_edge_prob(){
 	//getchar();
 }
 static void allocate_list(struct node* node,u32 succ_num){
+	node->succ_num=succ_num;
 	if(succ_num<=0)
 		return ;
-	node->succ_num=succ_num;
 	u16* tmp=(u16*)malloc(sizeof(u16)*succ_num);
 	struct node* tmp2=(struct node**)malloc(sizeof(struct node*)*succ_num);
-	if(!tmp || !tmp2)
+	if(tmp==NULL || tmp2==NULL)
 		exit(-1);
 	node->hv_list=tmp;
 	node->succ_list=tmp2;
 	return;
 }
-static struct node* new_node(u32 id,u32 succ_num){
+static struct node* new_node(u16 id,u32 succ_num){
 	struct node* newptr=(struct node*)malloc(sizeof(struct node));
 	if(newptr==NULL){
 		exit(-1);
@@ -434,11 +534,24 @@ static struct node* new_node(u32 id,u32 succ_num){
 	}
 	return newptr;
 }
+static void handle_collision(u16 id,u32 succ_num){
+	if(!cfg[id])
+		exit(-1);
+	if(cfg[id]->succ_num!=succ_num){
+		//need reallocate
+		//cfg[id]->succ_num=succ_num;
+		free(cfg[id]->hv_list);
+		cfg[id]->hv_list=NULL;
+		free(cfg[id]->succ_list);
+		cfg[id]->succ_list=NULL;
+		allocate_list(cfg[id],succ_num);
+	}
+}
 static void init_cfg(){
-	u32 id;
+	u16 id;
 	u32 succ_num;
 	u32 i;
-	FILE* fptr=fopen("./CFG","r");
+	FILE* fptr=fopen(cfg_file,"r");
 	for(i=0;i<MAP_SIZE;i++)
 		cfg[i]=NULL;
 	//memset(cfg,0,sizeof(cfg));
@@ -448,10 +561,12 @@ static void init_cfg(){
 		exit(-1);
 	}
 	while(fscanf(fptr,"%x",&id)==1){
-		fscanf(fptr,"%lx",&succ_num);
+		fscanf(fptr,"%x",&succ_num);
 		printf("%x %x\n",id,succ_num);
+		if(succ_num==21845)
+			getchar();
 		char newline;
-		u32 succ_id;
+		u16 succ_id;
 		if(cfg[id]==NULL){
 			struct node* newptr=new_node(id,succ_num);
 			cfg[id]=newptr;
@@ -459,15 +574,20 @@ static void init_cfg(){
 		else if(cfg[id]->succ_num==0){
 			allocate_list(cfg[id],succ_num);
 		}
-		for(i=0;i<succ_num;i++){
+		//TODO need to handle collision case
+		handle_collision(id,succ_num);
+		for(i=0;i<cfg[id]->succ_num;i++){
 			fscanf(fptr,"%x",&succ_id);
 			//printf("%x ",succ_id);
 			if(cfg[succ_id]==NULL){
 				cfg[succ_id]=new_node(id,0);
-				cfg[id]->succ_list[i]=cfg[succ_id];
-				cfg[id]->hv_list[i]=((id>>1) ^succ_id);
-				printf("%x ",cfg[id]->hv_list[i]);
+				//cfg[id]->succ_list[i]=cfg[succ_id];
+				//cfg[id]->hv_list[i]=((id>>1) ^succ_id);
+				//printf("%x ",cfg[id]->hv_list[i]);
 			}
+			cfg[id]->succ_list[i]=cfg[succ_id];
+			cfg[id]->hv_list[i]=((id>>1) ^succ_id);
+			printf("%x ",cfg[id]->hv_list[i]);
 		}
 
 		fscanf(fptr,"%c",&newline);
@@ -970,8 +1090,8 @@ static void mark_as_redundant(struct queue_entry* q, u8 state) {
 /* Append new test case to the queue. */
 
 static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
-printf("add to queue\n");
-getchar();
+//printf("add to queue\n");
+//getchar();
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
 
   q->fname        = fname;
@@ -980,6 +1100,9 @@ getchar();
   q->passed_det   = passed_det;
 	/*che fuzz*/
   	memcpy(q->trace_bit,trace_bits,sizeof(q->trace_bit));
+	//need to update q->prob_
+	//update_per_prob_level(q);
+	update_prob_per_run(q);
   if (q->depth > max_depth) max_depth = q->depth;
 
   if (queue_top) {
@@ -1003,39 +1126,6 @@ getchar();
   }
 
   last_path_time = get_cur_time();
-	/*CHE FUZZ*/
-  	update_edge_prob();
-  	double prob_sum=0.0,prob_pow_sum=0.0;
-	double level[9];
-	double q_count=0;
-	double means,sigma;
-  	struct queue_entry* p=queue_top;
-	u32 i=0;
-  	while(p){
-		p->prob=cal_prob(p);
-		prob_sum+=p->prob;
-		prob_pow_sum+=(p->prob*p->prob);
-		q_count++;
-		p=p->next;
-	}
-	means=prob_sum/q_count;
-	sigma=sqrt(prob_pow_sum/q_count-means*means);
-	level[0]=0.0;
-	level[8]=DBL_MAX;
-	int b=-3;
-	for(i=1;i<8;i++){
-		level[i]=means+b*sigma;
-		b++;
-	}
-	p=queue_top;
-	while(p){
-		for(i=0;i<8;i++){
-			if(p->prob>=level[i] && p->prob<level[i]){
-				p->prob_level=i;
-			}
-		}
-		p=p->next;
-	}
 }
 
 
@@ -1185,11 +1275,15 @@ static inline u8 has_new_bits(u8* virgin_map) {
   }
 	
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
-	if(virgin_addr == &virgin_bits){
+	/*if(virgin_addr == &virgin_bits){
     		for(i=0;i<MAP_SIZE;i++){
 	    		edge_num[i]+=trace_bits[i];
     		}
-	}
+	}*/
+  //beacuse this func will be call after every exec so I insert here
+  /*update_edge_num();
+  update_edge_prob();
+  update_per_prob_level();*/
   return ret;
 
 }
@@ -1487,7 +1581,7 @@ static void update_bitmap_score(struct queue_entry* q) {
 
   u32 i;
   u64 fav_factor = q->exec_us * q->len;
-
+	char prob_level=q->prob_level;
   /* For every byte set in trace_bits[], see if there is a previous winner,
      and how it compares to us. */
 
@@ -1498,9 +1592,11 @@ static void update_bitmap_score(struct queue_entry* q) {
        if (top_rated[i]) {
 
          /* Faster-executing or smaller test cases are favored. */
-
+	char top_rated_prob_level=top_rated[i]->prob_level;
+	if(prob_level>top_rated_prob_level) continue;
+	else if(prob_level == top_rated_prob_level){
          if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
-
+	}
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
 
@@ -5001,14 +5097,14 @@ static u32 calculate_score(struct queue_entry* q) {
      for a bit longer until they catch up with the rest. */
 	switch(q->prob_level){
 		case 0:
-			perf_score*=20;
+			perf_score*=5;
 			break;
 
 		case 1:
-			perf_score*=6;
+			perf_score*=3;
 			break;
 		case 2:
-			perf_score*=2;
+			perf_score*=1.5;
 			break;
 		case 3:
 			perf_score*=1;
@@ -5017,13 +5113,13 @@ static u32 calculate_score(struct queue_entry* q) {
 			perf_score/=1;
 			break;
 		case 5:
-			perf_score/=2;
+			perf_score/=1.5;
 			break;
 		case 6:
-			perf_score/=6;
+			perf_score/=3;
 			break;
 		case 7:
-			perf_score/=20;
+			perf_score/=5;
 			break;
 	}
   if (q->handicap >= 4) {
@@ -8046,7 +8142,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:b:t:T:dnCB:S:M:x:QV")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:F:m:b:t:T:dnCB:S:M:x:QV")) > 0)
 
     switch (opt) {
 
@@ -8230,6 +8326,11 @@ int main(int argc, char** argv) {
 
         /* Version number has been printed already, just quit. */
         exit(0);
+	case 'F':
+
+        if (cfg_file) FATAL("Multiple -o options not supported");
+        cfg_file = optarg;
+        break;
 
       default:
 
@@ -8237,7 +8338,9 @@ int main(int argc, char** argv) {
 
     }
 
-  if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
+  //if (optind == argc || !in_dir || !out_dir) usage(argv[0]);
+
+  if (optind == argc || !in_dir || !out_dir || !cfg_file) usage(argv[0]);
 
   setup_signal_handlers();
   check_asan_opts();
@@ -8328,7 +8431,7 @@ int main(int argc, char** argv) {
   perform_dry_run(use_argv);
 
   cull_queue();
-
+	//update_prob_level();
   show_init_stats();
 
   seek_to = find_start_position();
@@ -8400,7 +8503,10 @@ int main(int argc, char** argv) {
     if (!stop_soon && exit_1) stop_soon = 2;
 
     if (stop_soon) break;
-
+	
+    //update per seed run fuzz one
+    update_prob_per_run(queue_cur);
+  	update_bitmap_score(queue_cur); 
     queue_cur = queue_cur->next;
     current_entry++;
 
