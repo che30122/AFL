@@ -547,7 +547,7 @@ static void handle_collision(u16 id,u32 succ_num){
 		allocate_list(cfg[id],succ_num);
 	}
 }
-static void init_cfg(){
+__attribute__((optimize(0))) static void init_cfg(){
 	u16 id;
 	u32 succ_num;
 	u32 i;
