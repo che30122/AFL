@@ -560,6 +560,7 @@ static void init_cfg(){
 		printf("can not open CFG file %s\n",cfg_file);
 		exit(-1);
 	}
+	printf("init CFG start ....\n");
 	while(fscanf(fptr,"%x",&id)==1){
 		fscanf(fptr,"%x",&succ_num);
 		printf("%x %x\n",id,succ_num);
