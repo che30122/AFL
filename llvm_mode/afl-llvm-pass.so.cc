@@ -179,7 +179,13 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   }
 //output cfg
-	FILE* fp=fopen("./CFG","a");
+	char* cfg_file=NULL;
+	cfg_file=getenv("cfg_file_path");
+	if(!cfg_file)
+		FATAL("no cfg file setup!");
+	FILE* fp=fopen(cfg_file,"a");
+	if(!fp)
+		FATAL("afl-clang-fast can not open %s",cfg_file);
 	for(auto &F:M){
 		for(auto &BB:F){
 			auto id=BBID_map.find(&BB)->second;

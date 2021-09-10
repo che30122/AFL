@@ -557,7 +557,7 @@ static void init_cfg(){
 	//memset(cfg,0,sizeof(cfg));
 		
 	if(fptr==NULL){
-		printf("can not open CFG file\n");
+		printf("can not open CFG file %s\n",cfg_file);
 		exit(-1);
 	}
 	while(fscanf(fptr,"%x",&id)==1){
