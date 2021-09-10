@@ -21,3 +21,4 @@ afl-llvm-rt.o
 
 output
 t
+CFG
