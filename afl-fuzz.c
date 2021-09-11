@@ -511,6 +511,9 @@ static void allocate_list(struct node* node,u32 succ_num){
 		return ;
 	u16* tmp=(u16*)malloc(sizeof(u16)*node->succ_num);
 	struct node** tmp2=(struct node**)malloc(sizeof(struct node*)*node->succ_num);
+	for(int i=0;i<node->succ_num;i++){
+		tmp2[i]=NULL;
+	}
 	if(tmp==NULL || tmp2==NULL)
 		exit(-1);
 	node->hv_list=tmp;
@@ -544,6 +547,10 @@ static void handle_collision(u16 id,u32 succ_num){
 		//cfg[id]->succ_num=succ_num;
 		free(cfg[id]->hv_list);
 		cfg[id]->hv_list=NULL;
+		/*for(int i=0;i<cfg[id]->succ_num;i++){
+			free(cfg[id]->succ_list[i]);
+			cfg[id]->succ_list[i]=NULL;
+		}*/
 		free(cfg[id]->succ_list);
 		cfg[id]->succ_list=NULL;
 		allocate_list(cfg[id],succ_num);
@@ -563,7 +570,7 @@ __attribute__((optimize(0))) static void init_cfg(){
 		exit(-1);
 	}
 	printf("init CFG start ....\n");
-	while(fscanf(fptr,"%x",&id)==1){
+	while(fscanf(fptr,"%hx",&id)==1){
 		fscanf(fptr,"%x",&succ_num);
 		printf("%x %x\n",id,succ_num);
 		char newline;
@@ -578,7 +585,7 @@ __attribute__((optimize(0))) static void init_cfg(){
 		//TODO need to handle collision case
 		handle_collision(id,succ_num);
 		for(i=0;i<cfg[id]->succ_num;i++){
-			fscanf(fptr,"%x",&succ_id);
+			fscanf(fptr,"%hx",&succ_id);
 			//printf("%x ",succ_id);
 			if(cfg[succ_id]==NULL){//pre allocate
 				cfg[succ_id]=new_node(succ_id,0);
