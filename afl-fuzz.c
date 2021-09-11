@@ -507,10 +507,10 @@ static void show_edge_prob(){
 }
 static void allocate_list(struct node* node,u32 succ_num){
 	node->succ_num=succ_num;
-	if(succ_num<=0)
+	if(node->succ_num<=0)
 		return ;
-	u16* tmp=(u16*)malloc(sizeof(u16)*succ_num);
-	struct node* tmp2=(struct node**)malloc(sizeof(struct node*)*succ_num);
+	u16* tmp=(u16*)malloc(sizeof(u16)*node->succ_num);
+	struct node** tmp2=(struct node**)malloc(sizeof(struct node*)*node->succ_num);
 	if(tmp==NULL || tmp2==NULL)
 		exit(-1);
 	node->hv_list=tmp;
@@ -520,18 +520,20 @@ static void allocate_list(struct node* node,u32 succ_num){
 static struct node* new_node(u16 id,u32 succ_num){
 	struct node* newptr=(struct node*)malloc(sizeof(struct node));
 	if(newptr==NULL){
+		//TODO print msg for out of memory
 		exit(-1);
 	}
 	newptr->id=id;
 	newptr->succ_num=succ_num;
+	newptr->hv_list=NULL;
 	newptr->succ_list=NULL;
-	if(succ_num>0){
-		allocate_list(newptr,succ_num);
+	if(newptr->succ_num>0){
+		allocate_list(newptr,newptr->succ_num);
 	}
-	else{
+	/*else{
 		newptr->hv_list=NULL;
 		newptr->succ_list=NULL;
-	}
+	}*/
 	return newptr;
 }
 static void handle_collision(u16 id,u32 succ_num){
@@ -564,15 +566,13 @@ __attribute__((optimize(0))) static void init_cfg(){
 	while(fscanf(fptr,"%x",&id)==1){
 		fscanf(fptr,"%x",&succ_num);
 		printf("%x %x\n",id,succ_num);
-		if(succ_num==21845)
-			getchar();
 		char newline;
 		u16 succ_id;
 		if(cfg[id]==NULL){
 			struct node* newptr=new_node(id,succ_num);
 			cfg[id]=newptr;
 		}
-		else if(cfg[id]->succ_num==0){
+		else if(succ_num>0 && cfg[id]->succ_num==0){ //handle for pre allocate 
 			allocate_list(cfg[id],succ_num);
 		}
 		//TODO need to handle collision case
@@ -580,11 +580,8 @@ __attribute__((optimize(0))) static void init_cfg(){
 		for(i=0;i<cfg[id]->succ_num;i++){
 			fscanf(fptr,"%x",&succ_id);
 			//printf("%x ",succ_id);
-			if(cfg[succ_id]==NULL){
-				cfg[succ_id]=new_node(id,0);
-				//cfg[id]->succ_list[i]=cfg[succ_id];
-				//cfg[id]->hv_list[i]=((id>>1) ^succ_id);
-				//printf("%x ",cfg[id]->hv_list[i]);
+			if(cfg[succ_id]==NULL){//pre allocate
+				cfg[succ_id]=new_node(succ_id,0);
 			}
 			cfg[id]->succ_list[i]=cfg[succ_id];
 			cfg[id]->hv_list[i]=((id>>1) ^succ_id);
