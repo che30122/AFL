@@ -244,11 +244,17 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 #endif /* HAVE_AFFINITY */
 
 static FILE* plot_file;               /* Gnuplot output file              */
-
-struct queue_entry {
-	u8 trace_bit[MAP_SIZE];
+//che modify
+struct metric{
 	double prob;
 	char prob_level;
+};
+//che modify
+struct queue_entry {
+	u8 trace_bit[MAP_SIZE];
+	//double prob;
+	//char prob_level;
+	struct metric metric;
 
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
@@ -296,7 +302,7 @@ static u32 extras_cnt;                /* Total number of tokens read      */
 
 static struct extra_data* a_extras;   /* Automatically selected extras    */
 static u32 a_extras_cnt;              /* Total number of tokens available */
-
+//che modify
 struct node{
 	u16 id;
 	u32 succ_num;
@@ -304,6 +310,9 @@ struct node{
 	u16* hv_list;
 };
 struct node* cfg[MAP_SIZE];
+
+
+//che modify
 static u8* (*post_handler)(u8* buf, u32* len);
 
 /* Interesting values, as per config.h */
@@ -360,10 +369,11 @@ static void init_edge_num(){
 	memset(edge_num,0,sizeof(edge_num));
 }
 
-static void update_edge_num(){
+static void update_edge_num(struct queue_entry* q,u64 times){
 	u32 i;
 	for(i=0;i<MAP_SIZE;i++){
-		edge_num[i]+=trace_bits[i];
+		if(q->trace_bit[i])
+			edge_num[i]+=q->trace_bit[i]*times;
 	}
 }
 
@@ -382,10 +392,10 @@ static void init_edge_prob(){
 }
 static double cal_prob(struct queue_entry* q){
 	u32 i;
-	q->prob=1;
+	q->metric.prob=1;
 	for(i=0;i<MAP_SIZE;i++){
 		if(q->trace_bit[i])
-			q->prob*=edge_prob[i];
+			q->metric.prob*=edge_prob[i];
 	}
 }
 
@@ -418,7 +428,7 @@ static void update_edge_prob(){
 		}
 	}
 }
-static void update_per_prob_level(struct queue_entry* q){
+/*static void update_per_prob_level(struct queue_entry* q){
   	double prob_sum=0.0,prob_pow_sum=0.0;
 	double level[9];
 	double q_count=0;
@@ -428,10 +438,10 @@ static void update_per_prob_level(struct queue_entry* q){
 	//q->prob=cal_prob(q);
 	while(q_top){
 		if(q_top==q){
-			q->prob=cal_prob(q);
+			q->metric.prob=cal_prob(q);
 		}
-		prob_sum+=q_top->prob;
-		prob_pow_sum+=(q_top->prob*q_top->prob);
+		prob_sum+=q_top->metric.prob;
+		prob_pow_sum+=(q_top->metric.prob*q_top->metric.prob);
 		q_count++;
 		q_top=q_top->next;
 	}
@@ -446,24 +456,24 @@ static void update_per_prob_level(struct queue_entry* q){
 	}
 	//judge level
 	for(i=0;i<8;i++){
-		if(q->prob>=level[i] && q->prob<level[i]){
-			q->prob_level=i;
+		if(q->metric.prob>=level[i] && q->metric.prob<level[i]){
+			q->metric.prob_level=i;
 		}
 	}
 	
-}
+}*/
 static void update_prob_level(){	
   	update_edge_prob();
   	double prob_sum=0.0,prob_pow_sum=0.0;
-	double level[9];
+	double level[9]={0};
 	double q_count=0;
-	double means,sigma;
-  	struct queue_entry* q=queue_top;
+	double means=0,sigma=0;
+  	struct queue_entry* q=queue;
 	u32 i=0;
   	while(q){
-		q->prob=cal_prob(q);
-		prob_sum+=q->prob;
-		prob_pow_sum+=(q->prob*q->prob);
+		q->metric.prob=cal_prob(q);
+		prob_sum+=q->metric.prob;
+		prob_pow_sum+=(q->metric.prob*q->metric.prob);
 		q_count++;
 		q=q->next;
 	}
@@ -476,22 +486,22 @@ static void update_prob_level(){
 		level[i]=means+b*sigma;
 		b++;
 	}
-	q=queue_top;
+	q=queue;
 	while(q){
 		for(i=0;i<8;i++){
-			if(q->prob>=level[i] && q->prob<level[i]){
-				q->prob_level=i;
+			if(q->metric.prob>=level[i] && q->metric.prob<level[i]){
+				q->metric.prob_level=i;
 			}
 		}
 		q=q->next;
 	}
 }
 
-static void update_prob_per_run(struct queue_entry* q){
-	update_edge_num();
+/*static void update_prob_per_run(struct queue_entry* q){
+	//update_edge_num();
 	update_edge_prob();
 	update_per_prob_level(q);
-}
+}*/
 
 static void show_edge_prob(){
 	u32 i;
@@ -1104,10 +1114,10 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
 	/*che fuzz*/
-  	memcpy(q->trace_bit,trace_bits,sizeof(q->trace_bit));
+  	//memcpy(q->trace_bit,trace_bits,sizeof(q->trace_bit));
 	//need to update q->prob_
 	//update_per_prob_level(q);
-	update_prob_per_run(q);
+	//update_prob_per_run(q);
   if (q->depth > max_depth) max_depth = q->depth;
 
   if (queue_top) {
@@ -1585,8 +1595,8 @@ static void minimize_bits(u8* dst, u8* src) {
 static void update_bitmap_score(struct queue_entry* q) {
 
   u32 i;
-  u64 fav_factor = q->exec_us * q->len;
-	char prob_level=q->prob_level;
+  //u64 fav_factor = q->exec_us * q->len;
+	char prob_level=q->metric.prob_level;
   /* For every byte set in trace_bits[], see if there is a previous winner,
      and how it compares to us. */
 
@@ -1597,11 +1607,11 @@ static void update_bitmap_score(struct queue_entry* q) {
        if (top_rated[i]) {
 
          /* Faster-executing or smaller test cases are favored. */
-	char top_rated_prob_level=top_rated[i]->prob_level;
+	char top_rated_prob_level=top_rated[i]->metric.prob_level;
 	if(prob_level>top_rated_prob_level) continue;
-	else if(prob_level == top_rated_prob_level){
-         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
-	}
+//	else if(prob_level == top_rated_prob_level){
+//         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
+//	}
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
 
@@ -3000,7 +3010,12 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   q->bitmap_size = count_bytes(trace_bits);
   q->handicap    = handicap;
   q->cal_failed  = 0;
-
+//che modify
+	memcpy(q->trace_bit,trace_bits,MAP_SIZE);
+	q->metric.prob=0;
+	q->metric.prob_level=0;
+	//update_prob_per_run(q);
+//
   total_bitmap_size += q->bitmap_size;
   total_bitmap_entries++;
 
@@ -5100,7 +5115,7 @@ static u32 calculate_score(struct queue_entry* q) {
   /* Adjust score based on handicap. Handicap is proportional to how late
      in the game we learned about this path. Latecomers are allowed to run
      for a bit longer until they catch up with the rest. */
-	switch(q->prob_level){
+	switch(q->metric.prob_level){
 		case 0:
 			perf_score*=5;
 			break;
@@ -5363,7 +5378,8 @@ static u8 fuzz_one(char** argv) {
 
   u8  a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
-
+//che modify
+	u64 pre_exec_times=total_execs;
 #ifdef IGNORE_FINDS
 
   /* In IGNORE_FINDS mode, skip any entries that weren't in the
@@ -7034,7 +7050,10 @@ abandon_entry:
   if (in_buf != orig_in) ck_free(in_buf);
   ck_free(out_buf);
   ck_free(eff_map);
-
+//che modify
+	u64 exec_times=total_execs-pre_exec_times;
+	update_edge_num(queue_cur,exec_times);
+//che modify
   return ret_val;
 
 #undef FLIP_BIT
@@ -8331,11 +8350,13 @@ int main(int argc, char** argv) {
 
         /* Version number has been printed already, just quit. */
         exit(0);
+
+	/*specify cfg_file path*/
 	case 'F':
 
-        if (cfg_file) FATAL("Multiple -o options not supported");
-        cfg_file = optarg;
-        break;
+        	if (cfg_file) FATAL("Multiple -o options not supported");
+        	cfg_file = optarg;
+        	break;
 
       default:
 
@@ -8419,13 +8440,14 @@ int main(int argc, char** argv) {
 
   check_binary(argv[optind]);
 
-
+//TODO insert
   init_cfg();
   printf("init cfg done!\n");
   init_edge_num();
   init_edge_prob();
-  print_cfg();
-//	return 0;
+//  print_cfg();
+//TODO insert end
+
   start_time = get_cur_time();
 
   if (qemu_mode)
@@ -8460,8 +8482,16 @@ int main(int argc, char** argv) {
 
     cull_queue();
 
-    if (!queue_cur) {
-
+    if (!queue_cur) {//cycle done
+	    //che modify
+	    update_prob_level();
+	    struct queue_entry* q=queue;
+	    while(q){
+		    update_bitmap_score(q);
+		    q=q->next;
+	    }
+	    cull_queue();
+		//che modify
       queue_cycle++;
       current_entry     = 0;
       cur_skipped_paths = 0;
@@ -8508,10 +8538,12 @@ int main(int argc, char** argv) {
     if (!stop_soon && exit_1) stop_soon = 2;
 
     if (stop_soon) break;
-	
+//TODO insert	
     //update per seed run fuzz one
-    update_prob_per_run(queue_cur);
-  	update_bitmap_score(queue_cur); 
+    //update_prob_per_run(queue_cur);
+  //	update_bitmap_score(queue_cur); 
+
+//TODO insert end
     queue_cur = queue_cur->next;
     current_entry++;
 
